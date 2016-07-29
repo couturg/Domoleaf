@@ -18,6 +18,7 @@ import AESManager;
 from Crypto.Cipher import AES;
 from GLManager import *;
 import os;
+from Sender import *
 
 SLAVE_CONF_FILE                 = '/etc/domoleaf/slave.conf';
 MASTER_NAME_PREFIX              = 'MD3';
@@ -296,13 +297,8 @@ class SlaveDaemon:
         """
         Read data from monitor KNX and transmits to master.
         """
-        for knx in knx_to_read:
-            data = knx.recv(TELEGRAM_LENGTH);
-            if data:
-                self.send_knx_data_to_masters(data);
-            if knx in self.connected_knx:
-                knx.close();
-                self.connected_knx.remove(knx);
+        thrd = Sender(self, knx_to_read, self.connected_knx);
+        thrd.start();
 
     def receive_from_enocean(self, enocean_to_read):
         """
@@ -455,49 +451,6 @@ class SlaveDaemon:
                 frameinfo = getframeinfo(currentframe());
                 self.logger.error('in connect_to_masters: ' + str(e));
                 pass;
-
-    def send_knx_data_to_masters(self, data):
-        """
-        Converts 'data' from bytes to a clear KNX datagran, and sends it to available slaves.
-        """
-        ctrl = int(data[0]);
-        src_addr = int.from_bytes(data[1:3], byteorder='big');
-        dst_addr = int.from_bytes(data[3:5], byteorder='big');
-        data_len = int.from_bytes(data[5:6], byteorder='big');
-        telegram_data = data[6:7 + data_len];
-        typ = -1;
-        value = 0;
-        if telegram_data[1] & 0xC0 == 0x00:             # read
-            typ = 0;
-        elif telegram_data[1] & 0xC0 == 0x40:           # resp
-            typ = 1;
-            if data_len == 2:
-                value = int(telegram_data[1] & 0x0f);
-            elif data_len > 2:
-                value = int.from_bytes(telegram_data[2:data_len], byteorder='big');
-        elif telegram_data[1] & 0xC0 == 0x80:           # write
-            typ = 2;
-            if data_len == 2:
-                value = int(telegram_data[1] & 0x0f);
-            elif data_len > 2:
-                typ = 3;
-                value = int.from_bytes(telegram_data[2:data_len], byteorder='big');
-        json_str = json.JSONEncoder().encode(
-            {
-                "packet_type": "monitor_knx",
-                "type": typ,
-                "src_addr": individual2string(src_addr),
-                "dst_addr": group2string(dst_addr),
-                "date": str(time.time()).split('.')[0],
-                "value": value,
-                "sender_name": socket.gethostname()
-            }
-        );
-        print('===== SENDING KNX DATA =====')
-        print(json_str)
-        print('============================')
-        print()
-        self.send_data_to_all_masters(json_str);
 
     def send_enocean_data_to_masters(self, data):
         """
